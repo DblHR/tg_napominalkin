@@ -140,7 +140,7 @@ def reminder_worker():
                         loop.run_until_complete(
                             bot_instance.bot.send_message(
                                 chat_id=user_id,
-                                text=f"🔔 **Напоминание:**\n{task_text}\n\n/complete - отметить выполненной"
+                                text=f"🔔 йоу!\n{task_text}\n\n/complete - отметить выполненной"
                             )
                         )
                         logger.info(f"Напоминание отправлено пользователю {user_id}")
@@ -178,10 +178,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 Типы напоминаний:
 🔄 Повторять (введи минуты)
-🕐 Конкретное время (ЧЧ:ММ)
+🕐 Конкретное время (ЧЧ:ММ) по мск
 🚫 Без напоминаний
 
-**Как пользоваться:**
+Как пользоваться:
 1. /addtask - добавить задачу
 2. Выбери тип напоминания
 3. Введи интервал или время
@@ -207,6 +207,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == "reminder_custom":
         context.user_data['reminder_type'] = "custom"
+        context.user_data['waiting_for_input'] = "interval"
         await query.edit_message_text(
             "Введи интервал напоминаний в МИНУТАХ:\n\n"
             "Примеры:\n"
@@ -218,6 +219,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif data == "reminder_time":
         context.user_data['reminder_type'] = "specific_time"
+        context.user_data['waiting_for_input'] = "time"
         await query.edit_message_text(
             "Введи время напоминания в формате ЧЧ:ММ:\n\n"
             "Примеры:\n"
@@ -230,13 +232,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif data == "reminder_none":
         context.user_data['reminder_type'] = "none"
-        await query.edit_message_text("Напиши название задачи:")
+        context.user_data['waiting_for_input'] = "task"
+        await update.callback_query.edit_message_text("Напиши название задачи:")
 
-async def handle_interval_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('reminder_type') == 'custom':
-        user_input = update.message.text
-        
-        # Проверяем что введено ЧИСТО число
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Универсальный обработчик всех сообщений"""
+    user_input = update.message.text.strip()
+    
+    # Проверяем, на каком этапе находится пользователь
+    waiting_for = context.user_data.get('waiting_for_input')
+    reminder_type = context.user_data.get('reminder_type')
+    
+    if not waiting_for:
+        await update.message.reply_text("❌ Сначала выбери тип напоминания командой /addtask")
+        return
+    
+    if waiting_for == "interval":
+        # Обработка интервала
         if not user_input.isdigit():
             await update.message.reply_text("❌ Введи только цифры (без букв и символов). Попробуй еще раз:")
             return
@@ -262,7 +274,7 @@ async def handle_interval_input(update: Update, context: ContextTypes.DEFAULT_TY
                 minutes = interval % 60
                 interval_text = f"каждые {hours}ч {minutes}м"
             
-            context.user_data['waiting_for_task'] = True
+            context.user_data['waiting_for_input'] = "task"
             await update.message.reply_text(
                 f"✅ Напоминания будут приходить: {interval_text}\n\n"
                 "Теперь напиши название задачи:"
@@ -270,11 +282,9 @@ async def handle_interval_input(update: Update, context: ContextTypes.DEFAULT_TY
             
         except ValueError:
             await update.message.reply_text("❌ Пожалуйста, введи число (только цифры). Попробуй еще раз:")
-
-    elif context.user_data.get('reminder_type') == 'specific_time':
-        user_input = update.message.text.strip()
-        
-        # Строгая проверка формата времени (только ЧЧ:ММ)
+    
+    elif waiting_for == "time":
+        # Обработка времени
         time_pattern = r'^(\d{1,2}):(\d{2})$'
         time_match = re.match(time_pattern, user_input)
         
@@ -282,7 +292,7 @@ async def handle_interval_input(update: Update, context: ContextTypes.DEFAULT_TY
             hours, minutes = int(time_match.group(1)), int(time_match.group(2))
             if 0 <= hours <= 23 and 0 <= minutes <= 59:
                 context.user_data['reminder_time'] = f"{hours:02d}:{minutes:02d}"
-                context.user_data['waiting_for_task'] = True
+                context.user_data['waiting_for_input'] = "task"
                 
                 await update.message.reply_text(
                     f"✅ Напоминание будет приходить каждый день в {hours:02d}:{minutes:02d}\n\n"
@@ -297,13 +307,10 @@ async def handle_interval_input(update: Update, context: ContextTypes.DEFAULT_TY
                 "Примеры: 10:00, 14:30, 09:15\n"
                 "Попробуй еще раз:"
             )
-
-async def handle_task_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Проверяем, ждем ли мы название задачи после выбора типа напоминания
-    if context.user_data.get('waiting_for_task'):
-        task_text = update.message.text.strip()
-        
-        if not task_text:
+    
+    elif waiting_for == "task":
+        # Обработка названия задачи
+        if not user_input:
             await update.message.reply_text("❌ Название задачи не может быть пустым. Попробуй еще раз:")
             return
         
@@ -312,7 +319,7 @@ async def handle_task_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reminder_interval = context.user_data.get('reminder_interval', 0)
         reminder_time = context.user_data.get('reminder_time', "")
         
-        add_task(user_id, task_text, reminder_type, reminder_interval, reminder_time)
+        add_task(user_id, user_input, reminder_type, reminder_interval, reminder_time)
         
         # Формируем понятное сообщение о добавлении
         if reminder_type == "custom":
@@ -332,13 +339,10 @@ async def handle_task_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         
         await update.message.reply_text(
-            f"✅ **Задача добавлена!**\n\n"
-            f"📝 **Задача:** {task_text}\n"
-            f"⏰ **Режим:** {reminder_info}"
+            f"✅ Задача добавлена!\n\n"
+            f"📝 Задача: {user_input}\n"
+            f"⏰ Режим: {reminder_info}"
         )
-    
-    else:
-        await update.message.reply_text("❌ Сначала выбери тип напоминания командой /addtask")
 
 async def my_tasks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -348,7 +352,7 @@ async def my_tasks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📝 У тебя пока нет активных задач!")
         return
     
-    tasks_text = "📋 **Твои задачи:**\n\n"
+    tasks_text = "📋 Твои задачи:\n\n"
     for i, task in enumerate(tasks, 1):
         task_id, task_text, reminder_type, interval, specific_time, completed = task
         
@@ -365,7 +369,7 @@ async def my_tasks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             reminder_info = "🚫 Без напоминаний"
         
-        tasks_text += f"{i}. **{task_text}**\n   {reminder_info}\n\n"
+        tasks_text += f"{i}. {task_text}\n   {reminder_info}\n\n"
     
     tasks_text += "Используй /complete чтобы отметить задачу выполненной"
     await update.message.reply_text(tasks_text)
@@ -418,9 +422,8 @@ def main():
         application.add_handler(CallbackQueryHandler(button_handler, pattern="^reminder_"))
         application.add_handler(CallbackQueryHandler(complete_button_handler, pattern="^complete_"))
         
-        # Обработчики сообщений
-        application.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^\d+$') & ~filters.COMMAND, handle_interval_input))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_task_text))
+        # Универсальный обработчик сообщений
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
         
         # Запускаем систему напоминаний в отдельном потоке
         reminder_thread = threading.Thread(target=reminder_worker, daemon=True)

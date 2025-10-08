@@ -2,7 +2,8 @@ import os
 import logging
 import sqlite3
 import re
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
@@ -19,6 +20,9 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Глобальная переменная для хранения задачи напоминаний
+reminder_task = None
 
 # База данных
 def init_db():
@@ -119,6 +123,30 @@ def get_tasks_for_reminder():
     conn.commit()
     conn.close()
     return tasks_to_remind
+
+# Система напоминаний без JobQueue
+async def send_reminders(application):
+    while True:
+        try:
+            tasks = get_tasks_for_reminder()
+            
+            for task in tasks:
+                task_id, user_id, task_text = task
+                try:
+                    await application.bot.send_message(
+                        chat_id=user_id,
+                        text=f"🔔 **Напоминание:**\n{task_text}\n\n/complete - отметить выполненной"
+                    )
+                    logger.info(f"Напоминание отправлено пользователю {user_id}")
+                except Exception as e:
+                    logger.error(f"Не удалось отправить напоминание: {e}")
+            
+            # Ждем 60 секунд до следующей проверки
+            await asyncio.sleep(60)
+            
+        except Exception as e:
+            logger.error(f"Ошибка в системе напоминаний: {e}")
+            await asyncio.sleep(60)
 
 # Команды бота
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -283,31 +311,13 @@ async def complete_button_handler(update: Update, context: ContextTypes.DEFAULT_
         mark_task_completed(task_id)
         await query.edit_message_text("✅ Задача выполнена!")
 
-# Система напоминаний
-async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
-    tasks = get_tasks_for_reminder()
-    
-    for task in tasks:
-        task_id, user_id, task_text = task
-        try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"🔔 Напоминание:\n{task_text}\n\n/complete - отметить выполненной"
-            )
-            logger.info(f"Напоминание отправлено пользователю {user_id}")
-        except Exception as e:
-            logger.error(f"Ошибка отправки: {e}")
-
-def main():
+async def main():
     # Инициализация базы данных
     init_db()
     
     try:
-        # Создание приложения для современных версий
+        # Создание приложения без JobQueue
         application = Application.builder().token(BOT_TOKEN).build()
-        
-        # Получаем job_queue
-        job_queue = application.job_queue
         
         # Обработчики команд
         application.add_handler(CommandHandler("start", start))
@@ -324,18 +334,17 @@ def main():
         application.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^\d+$') & ~filters.COMMAND, handle_interval_input))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_task_text))
         
-        # Настройка напоминаний (проверка каждую минуту)
-        if job_queue:
-            job_queue.run_repeating(send_reminders, interval=60, first=60)
-            logger.info("✅ Система напоминаний запущена!")
+        # Запускаем систему напоминаний в отдельной задаче
+        asyncio.create_task(send_reminders(application))
+        logger.info("✅ Система напоминаний запущена!")
         
         # Запуск бота
         logger.info("🤖 Бот запускается на Railway...")
-        application.run_polling()
+        await application.run_polling()
         
     except Exception as e:
         logger.error(f"❌ Ошибка запуска бота: {e}")
         raise
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

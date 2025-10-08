@@ -12,9 +12,6 @@ if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN не найден в переменных окружения!")
 
 DB_NAME = "tasks.db"
-PORT = int(os.environ.get('PORT', 8443))
-
-# Остальной код без изменений...
 
 # Настройка логирования
 logging.basicConfig(
@@ -94,41 +91,30 @@ def get_tasks_for_reminder():
         task_id, user_id, task_text, reminder_type, interval, specific_time, last_reminder = task
         
         if reminder_type == 'specific_time':
-            # Проверяем конкретное время
-            if current_time == specific_time:
-                # Проверяем, не отправляли ли уже сегодня
-                if last_reminder != current_date:
-                    tasks_to_remind.append((task_id, user_id, task_text))
-                    cursor.execute('UPDATE tasks SET last_reminder_date = ? WHERE id = ?', 
-                                 (current_date, task_id))
+            if current_time == specific_time and last_reminder != current_date:
+                tasks_to_remind.append((task_id, user_id, task_text))
+                cursor.execute('UPDATE tasks SET last_reminder_date = ? WHERE id = ?', 
+                             (current_date, task_id))
         
-        elif reminder_type == 'custom':
-            # Периодические напоминания
+        elif reminder_type == 'custom' and interval > 0:
             if last_reminder:
                 try:
                     last_reminder_time = datetime.strptime(last_reminder, '%Y-%m-%d %H:%M:%S')
                     time_diff = (now - last_reminder_time).total_seconds() / 60
-                    
                     if time_diff >= interval:
                         tasks_to_remind.append((task_id, user_id, task_text))
                         cursor.execute('UPDATE tasks SET last_reminder_date = ? WHERE id = ?', 
                                      (now.strftime('%Y-%m-%d %H:%M:%S'), task_id))
                 except ValueError:
-                    # Если формат даты неправильный, сбрасываем
-                    tasks_to_remind.append((task_id, user_id, task_text))
-                    cursor.execute('UPDATE tasks SET last_reminder_date = ? WHERE id = ?', 
-                                 (now.strftime('%Y-%m-%d %H:%M:%S'), task_id))
+                    pass
             else:
-                # Первое напоминание - ждём полный интервал
                 cursor.execute('UPDATE tasks SET last_reminder_date = ? WHERE id = ?', 
                              (now.strftime('%Y-%m-%d %H:%M:%S'), task_id))
         
-        elif reminder_type == 'once':
-            # Напоминание один раз
-            if not last_reminder:
-                tasks_to_remind.append((task_id, user_id, task_text))
-                cursor.execute('UPDATE tasks SET last_reminder_date = ? WHERE id = ?', 
-                             (now.strftime('%Y-%m-%d %H:%M:%S'), task_id))
+        elif reminder_type == 'once' and not last_reminder:
+            tasks_to_remind.append((task_id, user_id, task_text))
+            cursor.execute('UPDATE tasks SET last_reminder_date = ? WHERE id = ?', 
+                         (now.strftime('%Y-%m-%d %H:%M:%S'), task_id))
     
     conn.commit()
     conn.close()
@@ -157,7 +143,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /addtask - Добавить новую задачу
 /mytasks - Показать текущие задачи
 /complete - Отметить задачу выполненной
-/help - Показать эту справку
+/help - Помощь
 
 ⏰ **Типы напоминаний:**
 
@@ -413,7 +399,7 @@ def main():
     # Инициализация базы данных
     init_db()
     
-    # Создание приложения
+    # Создание приложения для новых версий
     application = Application.builder().token(BOT_TOKEN).build()
     
     # Получаем job_queue
@@ -444,20 +430,7 @@ def main():
     
     # Запуск бота
     logger.info("🤖 Бот запускается на Railway...")
-    
-    # Для Railway используем webhook вместо polling
-    webhook_url = os.environ.get('RAILWAY_STATIC_URL')
-    if webhook_url:
-        # В продакшене используем webhook
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=BOT_TOKEN,
-            webhook_url=f"{webhook_url}/{BOT_TOKEN}"
-        )
-    else:
-        # В разработке используем polling
-        application.run_polling()
+    application.run_polling()
 
 if __name__ == "__main__":
     main()

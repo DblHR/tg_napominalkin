@@ -2,8 +2,9 @@ import os
 import logging
 import sqlite3
 import re
-import asyncio
-from datetime import datetime, timedelta
+import threading
+import time
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
@@ -21,8 +22,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Глобальная переменная для хранения задачи напоминаний
-reminder_task = None
+# Глобальная переменная для бота
+bot_instance = None
 
 # База данных
 def init_db():
@@ -124,29 +125,36 @@ def get_tasks_for_reminder():
     conn.close()
     return tasks_to_remind
 
-# Система напоминаний без JobQueue
-async def send_reminders(application):
+# Система напоминаний в отдельном потоке
+def reminder_worker():
+    """Работает в отдельном потоке и отправляет напоминания"""
     while True:
         try:
-            tasks = get_tasks_for_reminder()
-            
-            for task in tasks:
-                task_id, user_id, task_text = task
-                try:
-                    await application.bot.send_message(
-                        chat_id=user_id,
-                        text=f"🔔 **Напоминание:**\n{task_text}\n\n/complete - отметить выполненной"
-                    )
-                    logger.info(f"Напоминание отправлено пользователю {user_id}")
-                except Exception as e:
-                    logger.error(f"Не удалось отправить напоминание: {e}")
+            if bot_instance:
+                tasks = get_tasks_for_reminder()
+                
+                for task in tasks:
+                    task_id, user_id, task_text = task
+                    try:
+                        # Используем run_coroutine_threadsafe для асинхронного вызова
+                        future = asyncio.run_coroutine_threadsafe(
+                            bot_instance.bot.send_message(
+                                chat_id=user_id,
+                                text=f"🔔 **Напоминание:**\n{task_text}\n\n/complete - отметить выполненной"
+                            ),
+                            bot_instance._get_running_loop()
+                        )
+                        future.result(timeout=10)  # Ждем результат
+                        logger.info(f"Напоминание отправлено пользователю {user_id}")
+                    except Exception as e:
+                        logger.error(f"Не удалось отправить напоминание: {e}")
             
             # Ждем 60 секунд до следующей проверки
-            await asyncio.sleep(60)
+            time.sleep(60)
             
         except Exception as e:
             logger.error(f"Ошибка в системе напоминаний: {e}")
-            await asyncio.sleep(60)
+            time.sleep(60)
 
 # Команды бота
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -311,13 +319,17 @@ async def complete_button_handler(update: Update, context: ContextTypes.DEFAULT_
         mark_task_completed(task_id)
         await query.edit_message_text("✅ Задача выполнена!")
 
-async def main():
+def main():
     # Инициализация базы данных
     init_db()
     
     try:
-        # Создание приложения без JobQueue
+        # Создание приложения
         application = Application.builder().token(BOT_TOKEN).build()
+        
+        # Сохраняем глобальную ссылку на бота для напоминаний
+        global bot_instance
+        bot_instance = application
         
         # Обработчики команд
         application.add_handler(CommandHandler("start", start))
@@ -334,17 +346,19 @@ async def main():
         application.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^\d+$') & ~filters.COMMAND, handle_interval_input))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_task_text))
         
-        # Запускаем систему напоминаний в отдельной задаче
-        asyncio.create_task(send_reminders(application))
+        # Запускаем систему напоминаний в отдельном потоке
+        reminder_thread = threading.Thread(target=reminder_worker, daemon=True)
+        reminder_thread.start()
         logger.info("✅ Система напоминаний запущена!")
         
         # Запуск бота
         logger.info("🤖 Бот запускается на Railway...")
-        await application.run_polling()
+        application.run_polling()
         
     except Exception as e:
         logger.error(f"❌ Ошибка запуска бота: {e}")
         raise
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import asyncio
+    main()

@@ -83,7 +83,6 @@ def get_tasks_for_reminder():
     cursor = conn.cursor()
     now = datetime.now()
     current_time = now.strftime('%H:%M')
-    current_datetime = now.strftime('%Y-%m-%d %H:%M:%S')
     current_date = now.strftime('%Y-%m-%d')
     
     cursor.execute('''
@@ -98,17 +97,12 @@ def get_tasks_for_reminder():
         task_id, user_id, task_text, reminder_type, interval, specific_time, last_reminder = task
         
         if reminder_type == 'specific_time':
-            # Для напоминаний в конкретное время
-            if current_time == specific_time:
-                # Проверяем, не отправляли ли уже напоминание сегодня
-                if last_reminder is None or last_reminder.split()[0] != current_date:
-                    tasks_to_remind.append((task_id, user_id, task_text))
-                    cursor.execute('UPDATE tasks SET last_reminder_date = ? WHERE id = ?', 
-                                 (current_datetime, task_id))
-                    logger.info(f"Найдено напоминание на время {specific_time} для задачи {task_id}")
+            if current_time == specific_time and last_reminder != current_date:
+                tasks_to_remind.append((task_id, user_id, task_text))
+                cursor.execute('UPDATE tasks SET last_reminder_date = ? WHERE id = ?', 
+                             (current_date, task_id))
         
         elif reminder_type == 'custom' and interval > 0:
-            # Для кастомных интервалов
             if last_reminder:
                 try:
                     last_reminder_time = datetime.strptime(last_reminder, '%Y-%m-%d %H:%M:%S')
@@ -116,25 +110,15 @@ def get_tasks_for_reminder():
                     if time_diff >= interval:
                         tasks_to_remind.append((task_id, user_id, task_text))
                         cursor.execute('UPDATE tasks SET last_reminder_date = ? WHERE id = ?', 
-                                     (current_datetime, task_id))
-                        logger.info(f"Найдено интервальное напоминание для задачи {task_id}, интервал: {interval} мин")
-                except ValueError as e:
-                    logger.error(f"Ошибка парсинга даты для задачи {task_id}: {e}")
+                                     (now.strftime('%Y-%m-%d %H:%M:%S'), task_id))
+                except ValueError:
+                    pass
             else:
-                # Первое напоминание для задачи
-                tasks_to_remind.append((task_id, user_id, task_text))
                 cursor.execute('UPDATE tasks SET last_reminder_date = ? WHERE id = ?', 
-                             (current_datetime, task_id))
-                logger.info(f"Первое напоминание для задачи {task_id}")
+                             (now.strftime('%Y-%m-%d %H:%M:%S'), task_id))
     
     conn.commit()
     conn.close()
-    
-    if tasks_to_remind:
-        logger.info(f"Найдено задач для напоминания: {len(tasks_to_remind)}")
-    else:
-        logger.info("Задач для напоминания не найдено")
-    
     return tasks_to_remind
 
 # Система напоминаний в отдельном потоке
@@ -144,7 +128,6 @@ def reminder_worker():
         try:
             if bot_instance:
                 tasks = get_tasks_for_reminder()
-                logger.info(f"Проверка напоминаний: найдено {len(tasks)} задач")
                 
                 for task in tasks:
                     task_id, user_id, task_text = task
@@ -157,22 +140,21 @@ def reminder_worker():
                         loop.run_until_complete(
                             bot_instance.bot.send_message(
                                 chat_id=user_id,
-                                text=f"🔔 Напоминание!\n{task_text}\n\n/complete - отметить выполненной"
+                                text=f"🔔 йоу!\n{task_text}\n\n/complete - отметить выполненной"
                             )
                         )
-                        logger.info(f"✅ Напоминание отправлено пользователю {user_id} для задачи: {task_text}")
-                        
-                        loop.close()
+                        logger.info(f"Напоминание отправлено пользователю {user_id}")
                         
                     except Exception as e:
-                        logger.error(f"❌ Не удалось отправить напоминание пользователю {user_id}: {e}")
+                        logger.error(f"Не удалось отправить напоминание: {e}")
             
             # Ждем 60 секунд до следующей проверки
             time.sleep(60)
             
         except Exception as e:
-            logger.error(f"❌ Ошибка в системе напоминаний: {e}")
+            logger.error(f"Ошибка в системе напоминаний: {e}")
             time.sleep(60)
+
 # Команды бота
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -458,4 +440,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

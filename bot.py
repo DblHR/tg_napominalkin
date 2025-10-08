@@ -4,7 +4,7 @@ import sqlite3
 import re
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 # Настройки - токен ТОЛЬКО из переменных окружения
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
@@ -121,9 +121,9 @@ def get_tasks_for_reminder():
     return tasks_to_remind
 
 # Команды бота
-def start(update, context):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    update.message.reply_text(
+    await update.message.reply_text(
         f"пиривета {user.first_name}! 👋\n\n"
         "Я бот Дыни для напоминалок\n\n"
         "Команды:\n"
@@ -133,7 +133,7 @@ def start(update, context):
         "/help - Помощь"
     )
 
-def help_command(update, context):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """
 Команды:
 /addtask - Добавить задачу
@@ -147,9 +147,9 @@ def help_command(update, context):
 🕐 Конкретное время (ЧЧ:ММ)
 🚫 Без напоминаний
     """
-    update.message.reply_text(help_text)
+    await update.message.reply_text(help_text)
 
-def add_task_command(update, context):
+async def add_task_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🔔 Один раз", callback_data="reminder_once")],
         [InlineKeyboardButton("🔄 Повторять", callback_data="reminder_custom")],
@@ -157,41 +157,41 @@ def add_task_command(update, context):
         [InlineKeyboardButton("🚫 Без напоминаний", callback_data="reminder_none")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    update.message.reply_text("Выбери тип напоминания:", reply_markup=reply_markup)
+    await update.message.reply_text("Выбери тип напоминания:", reply_markup=reply_markup)
 
-def button_handler(update, context):
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    query.answer()
+    await query.answer()
     
     data = query.data
     
     if data == "reminder_once":
         context.user_data['reminder_type'] = "once"
-        query.edit_message_text("🔔 Напомнить один раз\nНапиши имя задачи:")
+        await query.edit_message_text("🔔 Напомнить один раз\nНапиши имя задачи:")
     
     elif data == "reminder_custom":
         context.user_data['reminder_type'] = "custom"
-        query.edit_message_text("Введи интервал в минутах:")
+        await query.edit_message_text("Введи интервал в минутах:")
     
     elif data == "reminder_time":
         context.user_data['reminder_type'] = "specific_time"
-        query.edit_message_text("Введи время (ЧЧ:ММ):")
+        await query.edit_message_text("Введи время (ЧЧ:ММ):")
     
     elif data == "reminder_none":
         context.user_data['reminder_type'] = "none"
-        query.edit_message_text("🚫 Без напоминаний\nНапиши имя задачи:")
+        await query.edit_message_text("🚫 Без напоминаний\nНапиши имя задачи:")
 
-def handle_interval_input(update, context):
+async def handle_interval_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('reminder_type') == 'custom':
         try:
             interval = int(update.message.text)
             if interval > 0:
                 context.user_data['reminder_interval'] = interval
-                update.message.reply_text(f"✅ Напоминания каждые {interval} мин\nНапиши имя задачи:")
+                await update.message.reply_text(f"✅ Напоминания каждые {interval} мин\nНапиши имя задачи:")
             else:
-                update.message.reply_text("Введи положительное число:")
+                await update.message.reply_text("Введи положительное число:")
         except ValueError:
-            update.message.reply_text("Введи число (минуты):")
+            await update.message.reply_text("Введи число (минуты):")
     
     elif context.user_data.get('reminder_type') == 'specific_time':
         time_pattern = r'^(\d{1,2}):(\d{2})$'
@@ -201,15 +201,15 @@ def handle_interval_input(update, context):
             hours, minutes = int(time_match.group(1)), int(time_match.group(2))
             if 0 <= hours <= 23 and 0 <= minutes <= 59:
                 context.user_data['reminder_time'] = f"{hours:02d}:{minutes:02d}"
-                update.message.reply_text(f"✅ Напоминание в {hours:02d}:{minutes:02d}\nНапиши имя задачи:")
+                await update.message.reply_text(f"✅ Напоминание в {hours:02d}:{minutes:02d}\nНапиши имя задачи:")
             else:
-                update.message.reply_text("Неверное время! Попробуй еще раз:")
+                await update.message.reply_text("Неверное время! Попробуй еще раз:")
         else:
-            update.message.reply_text("Используй формат ЧЧ:ММ:")
+            await update.message.reply_text("Используй формат ЧЧ:ММ:")
 
-def handle_task_text(update, context):
+async def handle_task_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'reminder_type' not in context.user_data:
-        update.message.reply_text("Сначала выбери тип напоминания: /addtask")
+        await update.message.reply_text("Сначала выбери тип напоминания: /addtask")
         return
     
     task_text = update.message.text
@@ -231,14 +231,14 @@ def handle_task_text(update, context):
         reminder_info = "🚫 Без напоминаний"
     
     context.user_data.clear()
-    update.message.reply_text(f"✅ Задача добавлена!\n{task_text}\n{reminder_info}")
+    await update.message.reply_text(f"✅ Задача добавлена!\n{task_text}\n{reminder_info}")
 
-def my_tasks_command(update, context):
+async def my_tasks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     tasks = get_user_tasks(user_id)
     
     if not tasks:
-        update.message.reply_text("📝 Нет активных задач!")
+        await update.message.reply_text("📝 Нет активных задач!")
         return
     
     tasks_text = "📋 Твои задачи:\n\n"
@@ -256,14 +256,14 @@ def my_tasks_command(update, context):
         
         tasks_text += f"{i}. {task_text}\n   {reminder_info}\n\n"
     
-    update.message.reply_text(tasks_text)
+    await update.message.reply_text(tasks_text)
 
-def complete_task_command(update, context):
+async def complete_task_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     tasks = get_user_tasks(user_id)
     
     if not tasks:
-        update.message.reply_text("Нет задач для отметки!")
+        await update.message.reply_text("Нет задач для отметки!")
         return
     
     keyboard = []
@@ -272,24 +272,25 @@ def complete_task_command(update, context):
         keyboard.append([InlineKeyboardButton(task_text, callback_data=f"complete_{task_id}")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
-    update.message.reply_text("Выбери задачу:", reply_markup=reply_markup)
+    await update.message.reply_text("Выбери задачу:", reply_markup=reply_markup)
 
-def complete_button_handler(update, context):
+async def complete_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    query.answer()
+    await query.answer()
     
     if query.data.startswith("complete_"):
         task_id = int(query.data.split("_")[1])
         mark_task_completed(task_id)
-        query.edit_message_text("✅ Задача выполнена!")
+        await query.edit_message_text("✅ Задача выполнена!")
 
-def send_reminders(context):
+# Система напоминаний
+async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
     tasks = get_tasks_for_reminder()
     
     for task in tasks:
         task_id, user_id, task_text = task
         try:
-            context.bot.send_message(
+            await context.bot.send_message(
                 chat_id=user_id,
                 text=f"🔔 Напоминание:\n{task_text}\n\n/complete - отметить выполненной"
             )
@@ -297,40 +298,44 @@ def send_reminders(context):
         except Exception as e:
             logger.error(f"Ошибка отправки: {e}")
 
-def error_handler(update, context):
-    logger.error(f"Ошибка: {context.error}")
-
 def main():
+    # Инициализация базы данных
     init_db()
     
-    # Простой и рабочий синтаксис для версии 13.15
-    updater = Updater(BOT_TOKEN, use_context=True)
-    dispatcher = updater.dispatcher
-    job_queue = updater.job_queue
-    
-    # Обработчики
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("addtask", add_task_command))
-    dispatcher.add_handler(CommandHandler("mytasks", my_tasks_command))
-    dispatcher.add_handler(CommandHandler("help", help_command))
-    dispatcher.add_handler(CommandHandler("complete", complete_task_command))
-    
-    dispatcher.add_handler(CallbackQueryHandler(button_handler, pattern="^reminder_"))
-    dispatcher.add_handler(CallbackQueryHandler(complete_button_handler, pattern="^complete_"))
-    
-    dispatcher.add_handler(MessageHandler(Filters.text & Filters.regex(r'^\d+$') & ~Filters.command, handle_interval_input))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_task_text))
-    
-    dispatcher.add_error_handler(error_handler)
-    
-    # Напоминания
-    if job_queue:
-        job_queue.run_repeating(send_reminders, interval=60, first=60)
-        logger.info("Система напоминаний запущена")
-    
-    logger.info("Бот запущен на Railway")
-    updater.start_polling()
-    updater.idle()
+    try:
+        # Создание приложения для современных версий
+        application = Application.builder().token(BOT_TOKEN).build()
+        
+        # Получаем job_queue
+        job_queue = application.job_queue
+        
+        # Обработчики команд
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("addtask", add_task_command))
+        application.add_handler(CommandHandler("mytasks", my_tasks_command))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("complete", complete_task_command))
+        
+        # Обработчики кнопок
+        application.add_handler(CallbackQueryHandler(button_handler, pattern="^reminder_"))
+        application.add_handler(CallbackQueryHandler(complete_button_handler, pattern="^complete_"))
+        
+        # Обработчики сообщений
+        application.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^\d+$') & ~filters.COMMAND, handle_interval_input))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_task_text))
+        
+        # Настройка напоминаний (проверка каждую минуту)
+        if job_queue:
+            job_queue.run_repeating(send_reminders, interval=60, first=60)
+            logger.info("✅ Система напоминаний запущена!")
+        
+        # Запуск бота
+        logger.info("🤖 Бот запускается на Railway...")
+        application.run_polling()
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка запуска бота: {e}")
+        raise
 
 if __name__ == "__main__":
     main()
